@@ -10,29 +10,70 @@ using Microsoft.Owin.Security.OAuth;
 using Owin;
 using AuthPlay.Models;
 using AuthPlay.Providers;
+using System.Threading.Tasks;
+using System.Linq;
 
 namespace AuthPlay
 {
     public partial class Startup
     {
+        public static OAuthBearerAuthenticationOptions OAuthBearerOptions { get; private set; }
+
+        public static OAuthAuthorizationServerOptions OAuthOptions { get; private set; }
+
+        public static Func<UserManager<ApplicationUser>> UserManagerFactory { get; set; }
+
+        public static string PublicClientId { get; private set; }
+
         // Enable the application to use OAuthAuthorization. You can then secure your Web APIs
         static Startup()
         {
-            PublicClientId = "web";
+            //PublicClientId = "web";
+
+            //OAuthOptions = new OAuthAuthorizationServerOptions
+            //{
+            //    TokenEndpointPath = new PathString("/Token"),
+            //    AuthorizeEndpointPath = new PathString("/Account/Authorize"),
+            //    Provider = new ApplicationOAuthProvider(PublicClientId),
+            //    AccessTokenExpireTimeSpan = TimeSpan.FromDays(14),
+            //    AllowInsecureHttp = true
+            //};
+
+
+            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            // Danger below!
+            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+            PublicClientId = "self";
+
+            //UserManagerFactory = () => new UserManager<ApplicationUser>(new UserStore<ApplicationUser>(new ApplicationDbContext()));
+            UserManagerFactory = () =>
+            {
+                var userManager = new UserManager<ApplicationUser>(new UserStore<ApplicationUser>(new ApplicationDbContext()));
+                userManager.UserValidator = new UserValidator<ApplicationUser>(userManager) { AllowOnlyAlphanumericUserNames = false };
+                return userManager;
+            };
 
             OAuthOptions = new OAuthAuthorizationServerOptions
             {
                 TokenEndpointPath = new PathString("/Token"),
-                AuthorizeEndpointPath = new PathString("/Account/Authorize"),
-                Provider = new ApplicationOAuthProvider(PublicClientId),
+                Provider = new ApplicationOAuthProvider(PublicClientId),  // , UserManagerFactory),
+                AuthorizeEndpointPath = new PathString("/api/Account/ExternalLogin"),
                 AccessTokenExpireTimeSpan = TimeSpan.FromDays(14),
                 AllowInsecureHttp = true
             };
+
+            OAuthBearerOptions = new OAuthBearerAuthenticationOptions();
+            OAuthBearerOptions.AccessTokenFormat = OAuthOptions.AccessTokenFormat;
+            OAuthBearerOptions.AccessTokenProvider = OAuthOptions.AccessTokenProvider;
+            OAuthBearerOptions.AuthenticationMode = OAuthOptions.AuthenticationMode;
+            OAuthBearerOptions.AuthenticationType = OAuthOptions.AuthenticationType;
+            OAuthBearerOptions.Description = OAuthOptions.Description;
+            OAuthBearerOptions.Provider = new CustomBearerAuthenticationProvider();
+            OAuthBearerOptions.SystemClock = OAuthOptions.SystemClock;
+
         }
 
-        public static OAuthAuthorizationServerOptions OAuthOptions { get; private set; }
-
-        public static string PublicClientId { get; private set; }
 
         // For more information on configuring authentication, please visit http://go.microsoft.com/fwlink/?LinkId=301864
         public void ConfigureAuth(IAppBuilder app)
@@ -41,7 +82,7 @@ namespace AuthPlay
             app.CreatePerOwinContext(ApplicationDbContext.Create);
             app.CreatePerOwinContext<ApplicationUserManager>(ApplicationUserManager.Create);
             app.CreatePerOwinContext<ApplicationSignInManager>(ApplicationSignInManager.Create);
-
+            
             // Enable the application to use a cookie to store information for the signed in user
             app.UseCookieAuthentication(new CookieAuthenticationOptions
             {
@@ -70,6 +111,10 @@ namespace AuthPlay
             // Enable the application to use bearer tokens to authenticate users
             app.UseOAuthBearerTokens(OAuthOptions);
 
+
+            // Facebook Testing...
+            OAuthBearerAuthenticationExtensions.UseOAuthBearerAuthentication(app, OAuthBearerOptions);
+
             // Uncomment the following lines to enable logging in with third party login providers
             //app.UseMicrosoftAccountAuthentication(
             //    clientId: "",
@@ -89,5 +134,20 @@ namespace AuthPlay
             //    ClientSecret = ""
             //});
         }
+
+
+        public class CustomBearerAuthenticationProvider : OAuthBearerAuthenticationProvider
+        {
+            public override Task ValidateIdentity(OAuthValidateIdentityContext context)
+            {
+                var claims = context.Ticket.Identity.Claims;
+                if (claims.Count() == 0 || claims.Any(claim => claim.Issuer != "Facebook" && claim.Issuer != "LOCAL_AUTHORITY"))
+                    context.Rejected();
+                return Task.FromResult<object>(null);
+            }
+        }
+
+
+
     }
 }
